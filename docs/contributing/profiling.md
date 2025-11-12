@@ -39,7 +39,7 @@ Refer to [examples/offline_inference/simple_profiling.py](../../examples/offline
 
 ```bash
 VLLM_TORCH_PROFILER_DIR=./vllm_profile \
-    vllm serve meta-llama/Llama-3.1-8B-Instruct
+    vllm serve meta-llama/Meta-Llama-3-70B
 ```
 
 vllm bench command:
@@ -47,7 +47,7 @@ vllm bench command:
 ```bash
 vllm bench serve \
     --backend vllm \
-    --model meta-llama/Llama-3.1-8B-Instruct \
+    --model meta-llama/Meta-Llama-3-70B \
     --dataset-name sharegpt \
     --dataset-path sharegpt.json \
     --profile \
@@ -70,21 +70,18 @@ apt update
 apt install nsight-systems-cli
 ```
 
-!!! tip
-    When profiling with `nsys`, it is advisable to set the environment variable `VLLM_WORKER_MULTIPROC_METHOD=spawn`. The default is to use the `fork` method instead of `spawn`. More information on the topic can be found in the [Nsight Systems release notes](https://docs.nvidia.com/nsight-systems/ReleaseNotes/index.html#general-issues).
-
-The Nsight Systems profiler can be launched with `nsys profile ...`, with a few recommended flags for vLLM: `--trace-fork-before-exec=true --cuda-graph-trace=node`.
-
 ### Example commands and usage
+
+When profiling with `nsys`, it is advisable to set the environment variable `VLLM_WORKER_MULTIPROC_METHOD=spawn`. The default is to use the `fork` method instead of `spawn`. More information on the topic can be found in the [Nsight Systems release notes](https://docs.nvidia.com/nsight-systems/ReleaseNotes/index.html#general-issues).
 
 #### Offline Inference
 
-For basic usage, you can just append the profiling command before any existing script you would run for offline inference.
+For basic usage, you can just append `nsys profile -o report.nsys-rep --trace-fork-before-exec=true --cuda-graph-trace=node` before any existing script you would run for offline inference.
 
 The following is an example using the `vllm bench latency` script:
 
 ```bash
-nsys profile  \
+nsys profile -o report.nsys-rep \
     --trace-fork-before-exec=true \
     --cuda-graph-trace=node \
 vllm bench latency \
@@ -98,29 +95,40 @@ vllm bench latency \
 
 #### OpenAI Server
 
-To profile the server, you will want to prepend your `vllm serve` command with `nsys profile` just like for offline inference, but you will need to specify a few other arguments to enable dynamic capture similarly to the Torch Profiler:
+To profile the server, you will want to prepend your `vllm serve` command with `nsys profile` just like for offline inference, however you must specify `--delay XX --duration YY` parameters according to the needs of your benchmark. After the duration time has been used up, the server will be killed.
 
 ```bash
 # server
-VLLM_TORCH_CUDA_PROFILE=1 \
-nsys profile \
+nsys profile -o report.nsys-rep \
     --trace-fork-before-exec=true \
     --cuda-graph-trace=node \
-    --capture-range=cudaProfilerApi \
-    --capture-range-end repeat \
+    --delay 30 \
+    --duration 60 \
     vllm serve meta-llama/Llama-3.1-8B-Instruct
 
 # client
 vllm bench serve \
     --backend vllm \
     --model meta-llama/Llama-3.1-8B-Instruct \
-    --dataset-name sharegpt \
-    --dataset-path sharegpt.json \
-    --profile \
-    --num-prompts 2
+    --num-prompts 1 \
+    --dataset-name random \
+    --random-input 1024 \
+    --random-output 512
 ```
 
-With `--profile`, vLLM will capture a profile for each run of `vllm bench serve`. Once the server is killed, the profiles will all be saved.
+In practice, you should set the `--duration` argument to a large value. Whenever you want the server to stop profiling, run:
+
+```bash
+nsys sessions list
+```
+
+to get the session id in the form of `profile-XXXXX`, then run:
+
+```bash
+nsys stop --session=profile-XXXXX
+```
+
+to manually kill the profiler and generate your `nsys-rep` report.
 
 #### Analysis
 

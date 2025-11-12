@@ -2,11 +2,18 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from vllm.config.pooler import PoolerConfig
+from vllm.platforms import current_platform
 
 
 def test_idefics_multimodal(
     vllm_runner,
+    monkeypatch,
 ) -> None:
+    if current_platform.is_rocm():
+        # ROCm Triton FA does not currently support sliding window attention
+        # switch to use ROCm CK FA backend
+        monkeypatch.setenv("VLLM_USE_TRITON_FLASH_ATTN", "False")
+
     prompts = [
         "Hello, my name is",
         "The president of the United States is",
@@ -52,7 +59,13 @@ def update_config(config):
 
 def test_gemma_multimodal(
     vllm_runner,
+    monkeypatch,
 ) -> None:
+    if current_platform.is_rocm():
+        # ROCm Triton FA does not currently support sliding window attention
+        # switch to use ROCm CK FA backend
+        monkeypatch.setenv("VLLM_USE_TRITON_FLASH_ATTN", "False")
+
     messages = [
         {
             "role": "system",

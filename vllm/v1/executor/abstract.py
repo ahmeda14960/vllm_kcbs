@@ -171,7 +171,7 @@ class Executor(ABC):
         args: tuple = (),
         kwargs: dict | None = None,
         non_block: Literal[True] = True,
-    ) -> Future[list[_R]]:
+    ) -> list[Future[_R]]:
         pass
 
     @abstractmethod
@@ -219,7 +219,7 @@ class Executor(ABC):
 
     def sample_tokens(
         self, grammar_output: GrammarOutput | None, non_block: bool = False
-    ) -> ModelRunnerOutput | None | Future[ModelRunnerOutput | None]:
+    ) -> ModelRunnerOutput | Future[ModelRunnerOutput]:
         output = self.collective_rpc(  # type: ignore[call-overload]
             "sample_tokens", args=(grammar_output,), non_block=non_block
         )
@@ -293,6 +293,12 @@ class Executor(ABC):
     def reset_mm_cache(self) -> None:
         """Reset the multi-modal cache in each worker."""
         self.collective_rpc("reset_mm_cache")
+
+    def start_profile(self) -> None:
+        self.collective_rpc("start_profile")
+
+    def stop_profile(self) -> None:
+        self.collective_rpc("stop_profile")
 
     def sleep(self, level: int = 1):
         if self.is_sleeping:

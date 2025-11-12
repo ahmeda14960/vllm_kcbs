@@ -759,7 +759,9 @@ class OpenAIServingChat(OpenAIServing):
                             delta_message = DeltaMessage(content=delta_text)
                         elif cur_channel == "analysis":
                             if request.include_reasoning:
-                                delta_message = DeltaMessage(reasoning=delta_text)
+                                delta_message = DeltaMessage(
+                                    reasoning_content=delta_text
+                                )
                             else:
                                 delta_message = None
                         elif (
@@ -821,7 +823,7 @@ class OpenAIServingChat(OpenAIServing):
                         ):
                             assert reasoning_parser is not None
                             delta_message = (
-                                reasoning_parser.extract_reasoning_streaming(
+                                reasoning_parser.extract_reasoning_content_streaming(
                                     previous_text,
                                     current_text,
                                     delta_text,
@@ -834,7 +836,7 @@ class OpenAIServingChat(OpenAIServing):
                             # or think end id in prompt_token_ids
                             # i.e {"enable_thinking": False},
                             # set reasoning status to end.
-                            # Only keep 'content', remove 'reasoning'.
+                            # Only keep 'content', remove 'reasoning_content'.
                             if reasoning_parser.is_reasoning_end(
                                 as_list(output.token_ids)
                             ) or (
@@ -897,7 +899,7 @@ class OpenAIServingChat(OpenAIServing):
 
                         if self.reasoning_parser and not reasoning_end_arr[i]:
                             delta_message = (
-                                reasoning_parser.extract_reasoning_streaming(
+                                reasoning_parser.extract_reasoning_content_streaming(
                                     previous_text,
                                     current_text,
                                     delta_text,
@@ -946,7 +948,7 @@ class OpenAIServingChat(OpenAIServing):
                         output_token_ids = as_list(output.token_ids)
                         if not reasoning_end_arr[i]:
                             delta_message = (
-                                reasoning_parser.extract_reasoning_streaming(
+                                reasoning_parser.extract_reasoning_content_streaming(
                                     previous_text,
                                     current_text,
                                     delta_text,
@@ -959,7 +961,7 @@ class OpenAIServingChat(OpenAIServing):
                             # i.e {"enable_thinking": False},
                             # set reasoning status to end.
                             # Remove the text and token ids related
-                            # to 'reasoning'.
+                            # to 'reasoning_content'.
                             if (
                                 res.prompt_token_ids
                                 and reasoning_parser.is_reasoning_end(
@@ -976,7 +978,7 @@ class OpenAIServingChat(OpenAIServing):
                             # When encountering think end id in delta_token_ids,
                             # set reasoning status to end.
                             # Remove the text and token ids related
-                            # to 'reasoning'.
+                            # to 'reasoning_content'.
                             if reasoning_parser.is_reasoning_end(output_token_ids):
                                 reasoning_end_arr[i] = True
                                 current_token_ids = (
@@ -1031,13 +1033,15 @@ class OpenAIServingChat(OpenAIServing):
 
                     # when only reasoning
                     elif self.reasoning_parser:
-                        delta_message = reasoning_parser.extract_reasoning_streaming(
-                            previous_text,
-                            current_text,
-                            delta_text,
-                            previous_token_ids,
-                            current_token_ids,
-                            output.token_ids,
+                        delta_message = (
+                            reasoning_parser.extract_reasoning_content_streaming(
+                                previous_text,
+                                current_text,
+                                delta_text,
+                                previous_token_ids,
+                                current_token_ids,
+                                output.token_ids,
+                            )
                         )
                     # handle streaming just a content delta
                     else:
@@ -1330,9 +1334,9 @@ class OpenAIServingChat(OpenAIServing):
                 logprobs = None
 
             if self.use_harmony:
-                reasoning, content, _ = parse_chat_output(token_ids)
+                reasoning_content, content, _ = parse_chat_output(token_ids)
                 if not request.include_reasoning:
-                    reasoning = None
+                    reasoning_content = None
 
                 if self.tool_parser is not None:
                     tool_parser = self.tool_parser(tokenizer)
@@ -1345,14 +1349,14 @@ class OpenAIServingChat(OpenAIServing):
                     content = tool_call_info.content
                     message = ChatMessage(
                         role=role,
-                        reasoning=reasoning,
+                        reasoning_content=reasoning_content,
                         content=content,
                         tool_calls=tool_call_info.tool_calls,
                     )
                 else:
                     message = ChatMessage(
                         role=role,
-                        reasoning=reasoning,
+                        reasoning_content=reasoning_content,
                         content=content,
                     )
 
@@ -1386,13 +1390,13 @@ class OpenAIServingChat(OpenAIServing):
                     return self.create_error_response(str(e))
                 # If the reasoning parser is enabled,
                 # tool calls are extracted exclusively from the content.
-                reasoning, content = reasoning_parser.extract_reasoning(
+                reasoning_content, content = reasoning_parser.extract_reasoning_content(
                     output.text, request=request
                 )
                 if not request.include_reasoning:
-                    reasoning = None
+                    reasoning_content = None
             else:
-                reasoning = None
+                reasoning_content = None
                 content = output.text
 
             auto_tools_called = False
@@ -1412,7 +1416,9 @@ class OpenAIServingChat(OpenAIServing):
                 not isinstance(request.tool_choice, ChatCompletionNamedToolChoiceParam)
                 and request.tool_choice != "required"
             ):
-                message = ChatMessage(role=role, reasoning=reasoning, content=content)
+                message = ChatMessage(
+                    role=role, reasoning_content=reasoning_content, content=content
+                )
 
             # if the request uses tools and specified a tool choice
             elif (
@@ -1422,7 +1428,7 @@ class OpenAIServingChat(OpenAIServing):
                 assert tool_calls is not None and len(tool_calls) > 0
                 message = ChatMessage(
                     role=role,
-                    reasoning=reasoning,
+                    reasoning_content=reasoning_content,
                     content="",
                     tool_calls=[tool_call_class(function=tc) for tc in tool_calls],
                 )
@@ -1446,13 +1452,15 @@ class OpenAIServingChat(OpenAIServing):
                     role=role,
                     content="",
                     tool_calls=tool_call_class_items,
-                    reasoning=reasoning,
+                    reasoning_content=reasoning_content,
                 )
 
             # if the request doesn't use tool choice
             # OR specifies to not use a tool
             elif not request.tool_choice or request.tool_choice == "none":
-                message = ChatMessage(role=role, reasoning=reasoning, content=content)
+                message = ChatMessage(
+                    role=role, reasoning_content=reasoning_content, content=content
+                )
 
             # handle when there are tools and tool choice is auto
             elif (
@@ -1468,7 +1476,7 @@ class OpenAIServingChat(OpenAIServing):
                 if tool_calls:
                     message = ChatMessage(
                         role=role,
-                        reasoning=reasoning,
+                        reasoning_content=reasoning_content,
                         content=content,
                         tool_calls=[
                             ToolCall(
@@ -1490,7 +1498,7 @@ class OpenAIServingChat(OpenAIServing):
                         ret_content = content
                     message = ChatMessage(
                         role=role,
-                        reasoning=reasoning,
+                        reasoning_content=reasoning_content,
                         content=ret_content,
                     )
 
@@ -1501,7 +1509,9 @@ class OpenAIServingChat(OpenAIServing):
                     " if tools should be extracted. Returning a standard chat "
                     "completion."
                 )
-                message = ChatMessage(role=role, reasoning=reasoning, content=content)
+                message = ChatMessage(
+                    role=role, reasoning_content=reasoning_content, content=content
+                )
             # In OpenAI's API, when a tool is called, the finish_reason is:
             # "tool_calls" for "auto" or "required" tool calls,
             # and "stop" for named tool calls.

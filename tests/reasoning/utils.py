@@ -9,17 +9,14 @@ from vllm.transformers_utils.tokenizers.mistral import MistralTokenizer
 
 class StreamingReasoningReconstructor:
     def __init__(self):
-        self.reasoning = None
+        self.reasoning_content = None
         self.other_content = None
 
     def append_delta(self, delta: DeltaMessage):
         # content and the reasoning content should not be present
         # at the same time
-        assert delta.content is None or delta.reasoning is None, (
+        assert delta.content is None or delta.reasoning_content is None, (
             "Both content and reasoning content are present in the delta message"
-        )
-        assert delta.reasoning == delta.reasoning_content, (
-            "reasoning_content should be present for backwards compatibility"
         )
         if delta.content is not None:
             if self.other_content is None:
@@ -27,10 +24,10 @@ class StreamingReasoningReconstructor:
             else:
                 self.other_content += delta.content
         else:
-            if self.reasoning is None:
-                self.reasoning = delta.reasoning
+            if self.reasoning_content is None:
+                self.reasoning_content = delta.reasoning_content
             else:
-                self.reasoning += delta.reasoning
+                self.reasoning_content += delta.reasoning_content
 
 
 def run_reasoning_extraction(
@@ -46,7 +43,7 @@ def run_reasoning_extraction(
             request,
         )
         return (
-            reconstructor.reasoning,
+            reconstructor.reasoning_content,
             reconstructor.other_content or None,
         )
     else:
@@ -72,7 +69,7 @@ def run_reasoning_extraction_mistral(
             request,
         )
         return (
-            reconstructor.reasoning,
+            reconstructor.reasoning_content,
             reconstructor.other_content or None,
         )
     else:
@@ -91,7 +88,7 @@ def run_reasoning_extraction_nonstreaming(
     request: ChatCompletionRequest | None = None,
 ) -> tuple[str | None, str | None]:
     request = request or ChatCompletionRequest(messages=[], model="test-model")
-    return reasoning_parser.extract_reasoning(
+    return reasoning_parser.extract_reasoning_content(
         model_output="".join(model_output), request=request
     )
 
@@ -113,7 +110,7 @@ def run_reasoning_extraction_streaming(
         ]
         current_text = previous_text + delta
         current_tokens = previous_tokens + token_delta
-        delta_message = reasoning_parser.extract_reasoning_streaming(
+        delta_message = reasoning_parser.extract_reasoning_content_streaming(
             previous_text,
             current_text,
             delta,
@@ -145,7 +142,7 @@ def run_reasoning_extraction_streaming_mistral(
         delta = reasoning_parser.model_tokenizer.convert_ids_to_tokens([model_delta])[0]
         current_text = previous_text + delta
         current_tokens = previous_tokens + token_delta
-        delta_message = reasoning_parser.extract_reasoning_streaming(
+        delta_message = reasoning_parser.extract_reasoning_content_streaming(
             previous_text,
             current_text,
             delta,

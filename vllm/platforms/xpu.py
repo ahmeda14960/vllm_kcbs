@@ -14,11 +14,12 @@ from vllm.utils import DEFAULT_MAX_NUM_BATCHED_TOKENS
 from .interface import DeviceCapability, Platform, PlatformEnum
 
 if TYPE_CHECKING:
-    from vllm.attention.backends.registry import AttentionBackendEnum
-    from vllm.config import VllmConfig
+    from vllm.attention.backends.registry import _Backend
+    from vllm.config import ModelConfig, VllmConfig
 else:
+    ModelConfig = None
     VllmConfig = None
-    AttentionBackendEnum = None
+    _Backend = None
 
 logger = init_logger(__name__)
 
@@ -43,7 +44,7 @@ class XPUPlatform(Platform):
     @classmethod
     def get_attn_backend_cls(
         cls,
-        selected_backend: "AttentionBackendEnum",
+        selected_backend: "_Backend",
         head_size: int,
         dtype: torch.dtype,
         kv_cache_dtype: str | None,
@@ -61,19 +62,18 @@ class XPUPlatform(Platform):
             "only NHD layout is supported by XPU attention kernels."
         )
 
-        from vllm.attention.backends.registry import AttentionBackendEnum
+        from vllm.attention.backends.registry import _Backend
 
         if use_sparse:
             raise NotImplementedError("Sparse Attention is not supported on XPU.")
-        use_v1 = envs.VLLM_USE_V1
-        if not use_v1:
-            raise ValueError("XPU backend only supports V1.")
-        if selected_backend == AttentionBackendEnum.TRITON_ATTN:
+        TRITON_ATTN = "vllm.v1.attention.backends.triton_attn.TritonAttentionBackend"  # noqa: E501
+        FLASH_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"  # noqa: E501
+        if selected_backend == _Backend.TRITON_ATTN:
             logger.info_once("Using Triton backend.")
-            return AttentionBackendEnum.TRITON_ATTN.get_path()
-        elif selected_backend == AttentionBackendEnum.FLASH_ATTN:
+            return TRITON_ATTN
+        elif selected_backend == _Backend.FLASH_ATTN:
             logger.info_once("Using Flash Attention backend.")
-            return AttentionBackendEnum.FLASH_ATTN.get_path()
+            return FLASH_ATTN
         elif selected_backend:
             raise ValueError(
                 f"Invalid attention backend for {cls.device_name}, "
@@ -81,7 +81,7 @@ class XPUPlatform(Platform):
             )
 
         logger.info("Using Flash Attention backend.")
-        return AttentionBackendEnum.FLASH_ATTN.get_path()
+        return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
 
     @classmethod
     def set_device(cls, device: torch.device) -> None:
@@ -113,10 +113,10 @@ class XPUPlatform(Platform):
         return device_props.total_memory
 
     @classmethod
-    def get_vit_attn_backend(
-        cls, head_size: int, dtype: torch.dtype
-    ) -> AttentionBackendEnum:
-        return AttentionBackendEnum.FLASH_ATTN
+    def get_vit_attn_backend(cls, head_size: int, dtype: torch.dtype) -> _Backend:
+        from vllm.attention.backends.registry import _Backend
+
+        return _Backend.FLASH_ATTN
 
     @classmethod
     def inference_mode(cls):

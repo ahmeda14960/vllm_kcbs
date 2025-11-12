@@ -20,36 +20,36 @@ def ernie45_tokenizer():
 # 带 </think>，非stream
 WITH_THINK = {
     "output": "abc</think>def",
-    "reasoning": "abc",
+    "reasoning_content": "abc",
     "content": "def",
 }
 # 带 </think>，stream
 WITH_THINK_STREAM = {
     "output": "abc</think>def",
-    "reasoning": "abc",
+    "reasoning_content": "abc",
     "content": "def",
 }
-# without </think>, all is reasoning
+# without </think>, all is reasoning_content
 WITHOUT_THINK = {
     "output": "abc",
-    "reasoning": "abc",
+    "reasoning_content": "abc",
     "content": None,
 }
-# without </think>, all is reasoning
+# without </think>, all is reasoning_content
 WITHOUT_THINK_STREAM = {
     "output": "abc",
-    "reasoning": "abc",
+    "reasoning_content": "abc",
     "content": None,
 }
 
 COMPLETE_REASONING = {
     "output": "abc</think>",
-    "reasoning": "abc",
+    "reasoning_content": "abc",
     "content": None,
 }
 MULTILINE_REASONING = {
     "output": "abc\nABC</think>def\nDEF",
-    "reasoning": "abc\nABC",
+    "reasoning_content": "abc\nABC",
     "content": "def\nDEF",
 }
 
@@ -120,5 +120,5 @@ def test_reasoning(
 
     print()
 
-    assert reasoning == param_dict["reasoning"]
+    assert reasoning == param_dict["reasoning_content"]
     assert content == param_dict["content"]

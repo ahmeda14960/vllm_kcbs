@@ -5,7 +5,6 @@ import random
 from dataclasses import dataclass
 from typing import TypeAlias
 
-import numpy as np
 import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
@@ -370,9 +369,9 @@ class MockEngineCore:
                         self.generated_logprobs_raw[req_idx][token_idx]
                     )
                     logprobs = LogprobsLists(
-                        np.array([logprobs_token_ids_]),
-                        np.array([logprobs_]),
-                        np.array([sampled_token_ranks_]),
+                        [logprobs_token_ids_],
+                        [logprobs_],
+                        [sampled_token_ranks_],
                     )
                 else:
                     logprobs = None

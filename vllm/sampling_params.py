@@ -657,3 +657,29 @@ class BeamSearchParams(
     temperature: float = 0.0
     length_penalty: float = 1.0
     include_stop_str_in_output: bool = False
+
+
+class KCBSParams(
+    msgspec.Struct,
+    omit_defaults=True,  # type: ignore[call-arg]
+    # required for @cached_property.
+    dict=True,
+):  # type: ignore[call-arg]
+    """KCBS (k-Chunked Beam Search) parameters for generation.
+
+    Args:
+        beam_width: k in k-CBS; the number of live beams maintained.
+        max_tokens: T; the suffix length to generate.
+        final_prune: If True, keep only the top-k final sequences; if False,
+                     keep all k^2 final expansions.
+        temperature: Temperature used when querying next-token logprobs.
+                     KCBS logic relies on top-k sets and logprobs; typically
+                     leave at 1.0 for standard top-k semantics.
+        include_stop_str_in_output: Whether to include stop strings in output.
+    """
+
+    beam_width: int
+    max_tokens: int
+    final_prune: bool = True
+    temperature: float = 1.0
+    include_stop_str_in_output: bool = False

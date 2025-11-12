@@ -6,10 +6,6 @@ import torch
 
 # Fused experts and PrepareFinalize imports
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
-from vllm.model_executor.layers.fused_moe import TritonExperts
-from vllm.model_executor.layers.fused_moe.all2all_utils import (
-    maybe_make_prepare_finalize,
-)
 from vllm.model_executor.layers.fused_moe.batched_deep_gemm_moe import (
     BatchedDeepGemmExperts,
 )
@@ -25,6 +21,7 @@ from vllm.model_executor.layers.fused_moe.fused_batched_moe import (
     BatchedTritonExperts,
     NaiveBatchedExperts,
 )
+from vllm.model_executor.layers.fused_moe.layer import FusedMoEMethodBase, TritonExperts
 from vllm.model_executor.layers.fused_moe.prepare_finalize import (
     MoEPrepareAndFinalizeNoEP,
 )
@@ -402,7 +399,9 @@ def make_prepare_finalize(
     quant_config: FusedMoEQuantConfig,
 ) -> mk.FusedMoEPrepareAndFinalize:
     if backend != "naive" and backend is not None:
-        prepare_finalize = maybe_make_prepare_finalize(moe, quant_config)
+        prepare_finalize = FusedMoEMethodBase._maybe_make_prepare_finalize(
+            moe, quant_config
+        )
         assert prepare_finalize is not None
         return prepare_finalize
     elif prepare_finalize_type == FlashInferCutlassMoEPrepareAndFinalize:

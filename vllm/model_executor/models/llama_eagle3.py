@@ -15,6 +15,7 @@ from vllm.model_executor.layers.linear import QKVParallelLinear
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.vocab_parallel_embedding import (
+    DEFAULT_VOCAB_PADDING_SIZE,
     ParallelLMHead,
     VocabParallelEmbedding,
 )
@@ -251,6 +252,8 @@ class Eagle3LlamaForCausalLM(LlamaForCausalLM):
         self.lm_head = ParallelLMHead(
             self.config.draft_vocab_size,
             self.config.hidden_size,
+            org_num_embeddings=self.config.draft_vocab_size,
+            padding_size=(DEFAULT_VOCAB_PADDING_SIZE),
             prefix=maybe_prefix(prefix, "lm_head"),
         )
         self.logits_processor = LogitsProcessor(

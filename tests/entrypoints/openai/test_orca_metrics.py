@@ -22,6 +22,9 @@ def monkeypatch_module():
 
 @pytest.fixture(scope="module", params=[True])
 def server(request, monkeypatch_module):
+    use_v1 = request.param
+    monkeypatch_module.setenv("VLLM_USE_V1", "1" if use_v1 else "0")
+
     args = [
         "--dtype",
         "bfloat16",

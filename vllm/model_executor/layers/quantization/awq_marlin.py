@@ -424,7 +424,6 @@ class AWQMoEMethod(FusedMoEMethodBase):
         if self.quant_config.weight_bits != 4:
             raise ValueError("AWQMoEMethod only supports 4bit now.")
         self.quant_type = scalar_types.uint4
-        self.use_marlin = True
 
     def create_weights(
         self,

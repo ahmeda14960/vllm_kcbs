@@ -41,6 +41,18 @@ class BeamSearchOutput:
     sequences: list[BeamSearchSequence]
 
 
+@dataclass
+class KCBSOutput:
+    """The output of KCBS (k-Chunked Beam Search).
+
+    It contains the list of the best KCBS-completed sequences for a single
+    request. The length of the list is either equal to the beam width (when
+    final prune is enabled) or up to k^2 (when keeping all final expansions).
+    """
+
+    sequences: list[BeamSearchSequence]
+
+
 class BeamSearchInstance:
     def __init__(
         self,

@@ -42,6 +42,7 @@ class CausalMixin(VllmModelForTextGeneration):
             self.skip_prefixes.append("lm_head.")
 
         if self.pp_group.is_last_rank:
+            self.unpadded_vocab_size = self.text_config.vocab_size
             self.lm_head = ParallelLMHead(
                 self.text_config.vocab_size,
                 self.text_config.hidden_size,
@@ -55,7 +56,7 @@ class CausalMixin(VllmModelForTextGeneration):
 
             logit_scale = getattr(self.text_config, "logit_scale", 1.0)
             self.logits_processor = LogitsProcessor(
-                self.text_config.vocab_size, scale=logit_scale
+                self.unpadded_vocab_size, self.text_config.vocab_size, logit_scale
             )
         else:
             self.lm_head = PPMissingLayer()

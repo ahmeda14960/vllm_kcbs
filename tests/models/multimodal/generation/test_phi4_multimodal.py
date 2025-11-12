@@ -11,6 +11,7 @@ from huggingface_hub import snapshot_download
 from vllm.assets.image import ImageAsset
 from vllm.lora.request import LoRARequest
 from vllm.multimodal.image import rescale_image_size
+from vllm.platforms import current_platform
 
 from ....conftest import (
     IMAGE_ASSETS,
@@ -44,6 +45,12 @@ speech_question = os.path.join(
 models = [model_path]
 
 target_dtype = "half"
+
+# ROCm Triton FA can run into shared memory issues with these models,
+# use other backends in the meantime
+# FIXME (mattwong, gshtrasb, hongxiayan)
+if current_platform.is_rocm():
+    os.environ["VLLM_USE_TRITON_FLASH_ATTN"] = "0"
 
 
 def run_test(

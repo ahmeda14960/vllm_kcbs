@@ -12,7 +12,6 @@ from compressed_tensors.quantization import ActivationOrdering, QuantizationStra
 import vllm.envs as envs
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm import _custom_ops as ops
-from vllm._aiter_ops import rocm_aiter_ops
 from vllm.distributed import get_tensor_model_parallel_world_size
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe import (
@@ -98,6 +97,9 @@ __all__ = [
 
 
 class CompressedTensorsMoEMethod(FusedMoEMethodBase):
+    def __init_(self, moe: FusedMoEConfig):
+        super().__init__(moe)
+
     @staticmethod
     def get_moe_method(
         quant_config: "CompressedTensorsConfig",  # type: ignore # noqa E501
@@ -580,8 +582,11 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
         # Disable marlin for rocm
         if current_platform.is_rocm():
             self.use_marlin = False
+        from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
+            is_rocm_aiter_moe_enabled,
+        )
 
-        self.rocm_aiter_moe_enabled = rocm_aiter_ops.is_fused_moe_enabled()
+        self.rocm_aiter_moe_enabled = is_rocm_aiter_moe_enabled()
 
         # cutlass path
         self.is_fp8_w8a8_sm100 = quant_config._is_fp8_w8a8_sm100(
@@ -824,8 +829,12 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
 
         # Property to determine if AITER is used
         if self.rocm_aiter_moe_enabled:
+            from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (  # noqa E501
+                shuffle_weights,
+            )
+
             # reshaping weights is required for aiter moe kernel.
-            shuffled_w13, shuffled_w2 = rocm_aiter_ops.shuffle_weights(
+            shuffled_w13, shuffled_w2 = shuffle_weights(
                 layer.w13_weight.data, layer.w2_weight.data
             )
 
@@ -963,18 +972,10 @@ class CompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsMoEMethod):
                 max_num_tokens=max_num_tokens_per_rank,
                 num_dispatchers=prepare_finalize.num_dispatchers(),
                 quant_config=self.moe_quant_config,
-                allow_deep_gemm=(
-                    envs.VLLM_USE_DEEP_GEMM and envs.VLLM_MOE_USE_DEEP_GEMM
-                ),
             )
         else:
             logger.debug("TritonOrDeepGemmExperts(%s)", self.__class__.__name__)
-            return TritonOrDeepGemmExperts(
-                self.moe_quant_config,
-                allow_deep_gemm=(
-                    envs.VLLM_USE_DEEP_GEMM and envs.VLLM_MOE_USE_DEEP_GEMM
-                ),
-            )
+            return TritonOrDeepGemmExperts(self.moe_quant_config, allow_deep_gemm=True)
 
     def get_fused_moe_quant_config(
         self, layer: torch.nn.Module
@@ -1342,7 +1343,6 @@ class CompressedTensorsWNA16MarlinMoEMethod(CompressedTensorsMoEMethod):
                 f"{WNA16_SUPPORTED_BITS}",
             )
         self.quant_type = WNA16_SUPPORTED_TYPES_MAP[self.num_bits]
-        self.use_marlin = True
 
     def create_weights(
         self,

@@ -76,7 +76,7 @@ class BaseThinkingReasoningParser(ReasoningParser):
         else:
             return input_ids[input_ids.index(self.end_token_id) + 1 :]
 
-    def extract_reasoning_streaming(
+    def extract_reasoning_content_streaming(
         self,
         previous_text: str,
         current_text: str,
@@ -103,10 +103,11 @@ class BaseThinkingReasoningParser(ReasoningParser):
                 # start token in previous, end token in delta,
                 # extract reasoning content
                 end_index = delta_text.find(self.end_token)
-                reasoning = delta_text[:end_index]
+                reasoning_content = delta_text[:end_index]
                 content = delta_text[end_index + len(self.end_token) :]
                 return DeltaMessage(
-                    reasoning=reasoning, content=content if content else None
+                    reasoning_content=reasoning_content,
+                    content=content if content else None,
                 )
             elif self.end_token_id in previous_token_ids:
                 # start token in previous, end token in previous,
@@ -115,27 +116,30 @@ class BaseThinkingReasoningParser(ReasoningParser):
             else:
                 # start token in previous, no end token in previous or delta,
                 # reasoning content continues
-                return DeltaMessage(reasoning=delta_text)
+                return DeltaMessage(reasoning_content=delta_text)
         elif self.start_token_id in delta_token_ids:
             if self.end_token_id in delta_token_ids:
                 # start token in delta, end token in delta,
                 # extract reasoning content
                 start_index = delta_text.find(self.start_token)
                 end_index = delta_text.find(self.end_token)
-                reasoning = delta_text[start_index + len(self.start_token) : end_index]
+                reasoning_content = delta_text[
+                    start_index + len(self.start_token) : end_index
+                ]
                 content = delta_text[end_index + len(self.end_token) :]
                 return DeltaMessage(
-                    reasoning=reasoning, content=content if content else None
+                    reasoning_content=reasoning_content,
+                    content=content if content else None,
                 )
             else:
                 # start token in delta, no end token in delta,
                 # reasoning content continues
-                return DeltaMessage(reasoning=delta_text)
+                return DeltaMessage(reasoning_content=delta_text)
         else:
             # not find thinking start token
             return DeltaMessage(content=delta_text)
 
-    def extract_reasoning(
+    def extract_reasoning_content(
         self, model_output: str, request: ChatCompletionRequest | ResponsesRequest
     ) -> tuple[str | None, str | None]:
         """
@@ -156,7 +160,7 @@ class BaseThinkingReasoningParser(ReasoningParser):
         if self.end_token not in model_output:
             return model_output, None
         else:
-            reasoning, _, content = model_output.partition(self.end_token)
+            reasoning_content, _, content = model_output.partition(self.end_token)
             # If generation stops right after end-of-think, return null content
             final_content = content or None
-            return reasoning, final_content
+            return reasoning_content, final_content

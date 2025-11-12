@@ -368,9 +368,11 @@ class OlmoForCausalLM(nn.Module, SupportsPP, SupportsLoRA):
         if config.tie_word_embeddings:
             self.lm_head = self.model.embed_tokens
         else:
+            self.unpadded_vocab_size = config.vocab_size
             self.lm_head = ParallelLMHead(
-                config.vocab_size,
+                self.unpadded_vocab_size,
                 config.hidden_size,
+                org_num_embeddings=config.vocab_size,
                 quant_config=quant_config,
                 prefix=maybe_prefix(prefix, "lm_head"),
             )

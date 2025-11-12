@@ -111,7 +111,6 @@ class GuidanceGrammar(StructuredOutputGrammar):
     vocab_size: int
     printed_error: bool = False
     terminated: bool = False
-    rollback_lag: int = 0
 
     def check_error(self):
         if not self.printed_error:
@@ -128,8 +127,6 @@ class GuidanceGrammar(StructuredOutputGrammar):
         """
 
         if self.ll_tokenizer.eos_token in tokens:
-            if self.ll_matcher.is_stopped() and not self.terminated:
-                self.rollback_lag = 1
             self.terminated = True
 
         if self.ll_matcher.is_stopped():
@@ -166,11 +163,8 @@ class GuidanceGrammar(StructuredOutputGrammar):
         return tokens[:num_tokens]
 
     def rollback(self, num_tokens: int) -> None:
-        if num_tokens > 0:
-            self.ll_matcher.rollback(num_tokens - self.rollback_lag)
-            self.terminated = False
-            self.rollback_lag = 0
-            self.check_error()
+        self.ll_matcher.rollback(num_tokens)
+        self.check_error()
 
     def fill_bitmask(self, bitmask: torch.Tensor, idx: int) -> None:
         # this will automatically return [EOS] mask if the matcher is stopped

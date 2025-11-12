@@ -23,7 +23,6 @@ from vllm.config import (
     StructuredOutputsConfig,
     is_init_field,
 )
-from vllm.config.compilation import CompilationMode
 from vllm.config.model import (
     ConvertOption,
     HfOverrides,
@@ -70,7 +69,12 @@ from vllm.outputs import (
 )
 from vllm.platforms import current_platform
 from vllm.pooling_params import PoolingParams
-from vllm.sampling_params import BeamSearchParams, RequestOutputKind, SamplingParams
+from vllm.sampling_params import (
+    BeamSearchParams,
+    KCBSParams,
+    RequestOutputKind,
+    SamplingParams,
+)
 from vllm.tasks import PoolingTask
 from vllm.transformers_utils.tokenizer import (
     AnyTokenizer,
@@ -260,9 +264,7 @@ class LLM:
 
         if compilation_config is not None:
             if isinstance(compilation_config, int):
-                compilation_config_instance = CompilationConfig(
-                    mode=CompilationMode(compilation_config)
-                )
+                compilation_config_instance = CompilationConfig(mode=compilation_config)
             elif isinstance(compilation_config, dict):
                 compilation_config_instance = CompilationConfig(
                     **{
@@ -731,8 +733,8 @@ class LLM:
                     lora_request=lora_req_batch,
                 )
 
-                for (start, end), instance in zip(
-                    instance_start_and_end, instances_batch
+                for inst_idx, ((start, end), instance) in enumerate(
+                    zip(instance_start_and_end, instances_batch)
                 ):
                     instance_new_beams = []
                     for i in range(start, end):
@@ -776,6 +778,236 @@ class LLM:
             )
             best_beams = sorted_completed[:beam_width]
 
+            for beam in best_beams:
+                beam.text = tokenizer.decode(beam.tokens)
+            outputs.append(BeamSearchOutput(sequences=best_beams))
+
+        return outputs
+
+    def kcbs(
+        self,
+        prompts: list[TokensPrompt | TextPrompt],
+        params: KCBSParams,
+        lora_request: list[LoRARequest] | LoRARequest | None = None,
+        use_tqdm: bool = False,
+        concurrency_limit: int | None = None,
+    ) -> list[BeamSearchOutput]:
+        """
+        Run Baseline k-Chunked Beam Search (KCBS) for a fixed suffix length T.
+
+        Notes:
+        - This high-level implementation queries top-k next-token logprobs at
+          each step by calling `generate(..., logprobs=k, max_tokens=1)` and
+          applies the KCBS normalization Z over those k tokens.
+        - EOS is disallowed for steps < T and allowed at step T.
+        - For minimal invasiveness, this uses the logprobs provided by the
+          engine (typically raw logprobs). For exact post-processor semantics,
+          set model `logprobs_mode` to processed in your model config.
+        """
+
+        beam_width = params.beam_width
+        max_tokens = params.max_tokens
+        temperature = params.temperature
+        final_prune = params.final_prune
+
+        # lora requests per prompt
+        lora_requests = self._get_beam_search_lora_requests(lora_request, prompts)
+
+        tokenizer = self.get_tokenizer()
+        eos_token_id = tokenizer.eos_token_id
+
+        if use_tqdm and concurrency_limit is not None:
+            logger.warning(
+                "Progress bar is not supported when using concurrency_limit. "
+                "Disabling progress bar."
+            )
+            use_tqdm = False
+
+        if concurrency_limit is None:
+            concurrency_limit = len(prompts)
+
+        def create_tokens_prompt_from_beam(beam: BeamSearchSequence) -> TokensPrompt:
+            token_prompt_kwargs: TokensPrompt = {"prompt_token_ids": beam.tokens}
+            if beam.multi_modal_data is not None:
+                token_prompt_kwargs["multi_modal_data"] = beam.multi_modal_data
+
+            if beam.mm_processor_kwargs is not None:
+                token_prompt_kwargs["mm_processor_kwargs"] = beam.mm_processor_kwargs
+            return TokensPrompt(**token_prompt_kwargs)
+
+        # Initialize instances with a single live beam per prompt
+        instances: list[BeamSearchInstance] = []
+        for lora_req, prompt in zip(lora_requests, prompts):
+            mm_kwargs = {}
+            if "multi_modal_data" in prompt:
+                mm_kwargs["multi_modal_data"] = prompt["multi_modal_data"]
+            if "mm_processor_kwargs" in prompt:
+                mm_kwargs["mm_processor_kwargs"] = prompt["mm_processor_kwargs"]
+
+            if "prompt_token_ids" in prompt:
+                prompt_tokens = cast(TokensPrompt, prompt)["prompt_token_ids"]
+            else:
+                prompt_tokens = self.get_tokenizer().encode(cast(TextPrompt, prompt)["prompt"])  # type: ignore
+
+            instances.append(
+                BeamSearchInstance(
+                    prompt_tokens,
+                    lora_request=lora_req,
+                    logprobs=None,
+                    **mm_kwargs,
+                )
+            )
+
+        for prompt_start in range(0, len(prompts), concurrency_limit):
+            instances_batch = instances[prompt_start : prompt_start + concurrency_limit]
+
+            token_iter = range(max_tokens)
+            if use_tqdm:
+                token_iter = tqdm(
+                    token_iter, desc="KCBS", unit="token", unit_scale=False
+                )
+                logger.warning(
+                    "The progress bar shows the upper bound on token steps and "
+                    "may finish early due to stopping conditions. It does not "
+                    "reflect instance-level progress."
+                )
+
+            for step_idx in token_iter:
+                allow_eos = (step_idx + 1) == max_tokens
+
+                # Flatten all live beams from this batch of instances
+                all_beams: list[BeamSearchSequence] = list(
+                    sum((instance.beams for instance in instances_batch), [])
+                )
+                pos = [0] + list(
+                    itertools.accumulate(
+                        len(instance.beams) for instance in instances_batch
+                    )
+                )
+                instance_start_and_end: list[tuple[int, int]] = list(
+                    zip(pos[:-1], pos[1:])
+                )
+
+                if not all_beams:
+                    break
+
+                # Build prompts and lora requests for each live beam
+                prompts_batch, lora_req_batch = zip(
+                    *[
+                        (create_tokens_prompt_from_beam(beam), beam.lora_request)
+                        for beam in all_beams
+                    ]
+                )
+
+                # Request top-k logprobs for the next position.
+                # We do not rely on the sampled token; KCBS uses candidate set S.
+                sp = SamplingParams(
+                    logprobs=beam_width,
+                    max_tokens=1,
+                    temperature=temperature,
+                    include_stop_str_in_output=params.include_stop_str_in_output,
+                    ignore_eos=not allow_eos,
+                )
+
+                output = self.generate(
+                    prompts_batch,
+                    sampling_params=sp,
+                    use_tqdm=False,
+                    lora_request=lora_req_batch,
+                )
+
+                # Expand each live beam with top-k candidates and KCBS normalization
+                new_beams_per_instance: list[list[BeamSearchSequence]] = [
+                    [] for _ in instances_batch
+                ]
+
+                for (start, end), instance in zip(
+                    instance_start_and_end, instances_batch
+                ):
+                    # Expand beams for this instance
+                    for idx in range(start, end):
+                        current_beam = all_beams[idx]
+                        result = output[idx]
+
+                        # If no logprobs, treat as non-expandable (e.g., truncated)
+                        if not result.outputs or result.outputs[0].logprobs is None:
+                            continue
+
+                        # Get logprobs dict for the single generated position.
+                        # SampleLogprobs can be FlattenLogprobs or list[dict].
+                        lp_container = result.outputs[0].logprobs
+                        # Extract the first position's mapping.
+                        if hasattr(lp_container, "__getitem__"):
+                            logprobs_pos0 = lp_container[0]
+                        else:
+                            # Fallback (should not happen with current types)
+                            logprobs_pos0 = lp_container
+
+                        # Collect top-k by rank (1..k). Filter EOS if disallowed.
+                        candidates: list[tuple[int, float]] = []
+                        for tok_id, logprob_obj in logprobs_pos0.items():
+                            rank = getattr(logprob_obj, "rank", None)
+                            if rank is None or rank > beam_width:
+                                continue
+                            if not allow_eos and tok_id == eos_token_id:
+                                continue
+                            candidates.append((tok_id, float(logprob_obj.logprob)))
+
+                        if not candidates:
+                            continue
+
+                        # KCBS normalization Z over S (top-k):
+                        # logsumexp(a_i) = m + log(sum(exp(a_i - m)))
+                        import math as _math
+                        max_lp = max(lp for _, lp in candidates)
+                        sum_exp = sum(_math.exp(lp - max_lp) for _, lp in candidates)
+                        z = max_lp + _math.log(sum_exp)
+
+                        # Generate expanded beams
+                        for tok_id, lp in candidates:
+                            new_beam = BeamSearchSequence(
+                                tokens=current_beam.tokens + [tok_id],
+                                logprobs=current_beam.logprobs + [logprobs_pos0],
+                                lora_request=current_beam.lora_request,
+                                cum_logprob=current_beam.cum_logprob + lp - z,
+                                multi_modal_data=current_beam.multi_modal_data,
+                                mm_processor_kwargs=current_beam.mm_processor_kwargs,
+                            )
+                            new_beams_per_instance[inst_idx].append(new_beam)
+
+                # Select beams
+                if allow_eos:
+                    # Final selection per instance
+                    for inst, new_beams in zip(instances_batch, new_beams_per_instance):
+                        sorted_beams = sorted(
+                            new_beams,
+                            key=lambda b: b.cum_logprob,
+                            reverse=True,
+                        )
+                        if final_prune:
+                            inst.completed = sorted_beams[:beam_width]
+                        else:
+                            inst.completed = sorted_beams
+                        inst.beams = []
+                    break
+                else:
+                    # Prune to beam width for next step
+                    for inst, new_beams in zip(instances_batch, new_beams_per_instance):
+                        sorted_beams = sorted(
+                            new_beams,
+                            key=lambda b: b.cum_logprob,
+                            reverse=True,
+                        )
+                        inst.beams = sorted_beams[:beam_width]
+
+        # Package outputs
+        outputs: list[BeamSearchOutput] = []
+        for instance in instances:
+            # If not completed (e.g., early break), finish with current beams
+            if not instance.completed:
+                instance.completed.extend(instance.beams)
+            best_beams = instance.completed
+            # Populate decoded text for convenience
             for beam in best_beams:
                 beam.text = tokenizer.decode(beam.tokens)
             outputs.append(BeamSearchOutput(sequences=best_beams))
